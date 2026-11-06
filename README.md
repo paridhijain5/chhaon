@@ -9,7 +9,6 @@ Chhaon scores every road segment for **felt heat** (air temperature, humidity, s
 ## Live Demo
 **https://paridhijain5.github.io/chhaon/**
 
-Demo video: [add link here]
 
 ## The Problem
 Millions of delivery riders, construction workers and street vendors work through heatwaves with no street-level heat information. Heat alerts cover a whole district, navigation apps pick the fastest (often sunniest) route, and nobody tracks cumulative heat exposure.
