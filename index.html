@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Chhaon – Shade-First Heat Routing (MVP)</title>
+<style>
+:root{--bg:#f6efe4;--fg:#1b1410;--card:#fffaf2;--line:#e0d3c0;--mut:#5b4d42;--acc:#b8470a;--blue:#1d4ed8;--bad:#b42318;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1b1410;--fg:#f6efe4;--card:#2a201a;--line:#4a3b30;--mut:#cdbfae;--acc:#ff9a5c;--blue:#7da2ff;--bad:#ff8a7a}}
+:root[data-theme="dark"]{--bg:#1b1410;--fg:#f6efe4;--card:#2a201a;--line:#4a3b30;--mut:#cdbfae;--acc:#ff9a5c;--blue:#7da2ff;--bad:#ff8a7a}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:16px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1100px;margin:0 auto;padding:20px 16px 40px}
+h1{margin:0;font-size:28px}h1 span{color:var(--acc)}
+.sub{color:var(--mut);margin:4px 0 16px}
+.grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,1fr);gap:16px}
+@media(max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px}
+canvas{width:100%;height:auto;display:block;border-radius:10px;cursor:crosshair;touch-action:manipulation}
+label{display:flex;justify-content:space-between;font-size:14px;margin-top:10px}
+input[type=range]{width:100%;accent-color:var(--acc)}
+.row{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}
+button{background:var(--acc);color:#fff;border:0;border-radius:10px;padding:9px 14px;font-weight:600;cursor:pointer;font-size:14px}
+button.alt{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.two{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+.m h3{margin:0 0 6px;font-size:15px}.m div{font-size:14px;color:var(--mut)}.m b{color:var(--fg)}
+.bar{height:14px;border-radius:7px;background:var(--line);overflow:hidden;margin:4px 0 10px}.bar i{display:block;height:100%;width:0;transition:width .1s}
+#alert{margin-top:8px;font-size:14px;min-height:20px;color:var(--bad);font-weight:600}
+.leg{display:flex;align-items:center;gap:8px;font-size:13px;color:var(--mut);margin-top:8px}
+.leg i{flex:1;height:10px;border-radius:5px;background:linear-gradient(90deg,rgb(31,138,138),rgb(240,180,40),rgb(200,40,30))}
+small{color:var(--mut)}
+</style>
+</head>
+<body>
+<main>
+<h1>Chhaon <span>छाँव</span></h1>
+<p class="sub">Shade-first heat routing and Heat Dose tracking for outdoor workers. Click the map to set start (A) and destination (B).</p>
+<div class="grid">
+ <div class="card">
+  <canvas id="cv" width="720" height="720" aria-label="Simulated city heat map with routes"></canvas>
+  <div class="leg"><span id="lmin"></span><i></i><span id="lmax"></span></div>
+  <small>Road colour = feels-like °C. Grey blocks = buildings with live sun shadows, green = parks. Blue line = Chhaon route, black dashed = shortest route.</small>
+ </div>
+ <div>
+  <div class="card">
+   <label>Time of day <b id="vh"></b></label><input id="hr" type="range" min="6" max="18" step="0.25" value="13">
+   <label>Air temperature <b id="vT"></b></label><input id="T" type="range" min="25" max="48" step="1" value="40">
+   <label>Humidity <b id="vRH"></b></label><input id="RH" type="range" min="15" max="90" step="5" value="40">
+   <label>Shade preference <b id="vk"></b></label><input id="k" type="range" min="0" max="8" step="0.5" value="4">
+   <div class="row"><button id="sim">Simulate worker shift</button><button class="alt" id="new">New city</button><label style="margin:0;align-items:center;gap:6px"><input type="checkbox" id="vc"> Hindi voice alert</label></div>
+  </div>
+  <div class="two" id="mets"></div>
+  <div class="card" style="margin-top:12px">
+   <b>Heat Dose over a shift</b> <small>(repeated trips A→B; limit is an illustrative threshold)</small>
+   <div style="margin-top:8px;font-size:14px">Shortest-route rider <span id="tf"></span></div><div class="bar"><i id="bf" style="background:var(--bad)"></i></div>
+   <div style="font-size:14px">Chhaon rider <span id="tc"></span></div><div class="bar"><i id="bc" style="background:var(--blue)"></i></div>
+   <div id="alert"></div>
+  </div>
+ </div>
+</div>
+<p><small>Prototype on a synthetic city grid. Feels-like uses the Steadman apparent-temperature formula plus a solar-load term; shadows are computed geometrically from building heights and sun position. Not medical advice.</small></p>
+</main>
+<script>
+const N=9,S=80,PAD=40,LIM=300,TH=36,MPE=0.4,WP=[[2,2],[6,1],[4,5],[1,6],[7,7]];
+let seed=11,Bk=[],E=[],adj=[],sun={},fast=[],cool=[],sim=null,tm=null,Lmin=0,Lmax=1,AT=0;
+const P={T:40,RH:40,hr:13,k:4,A:[0,8],B:[8,0],click:0};
+const $=id=>document.getElementById(id);
+function rnd(){seed=(seed*1664525+1013904223)%4294967296;return seed/4294967296}
+function gen(){Bk=[];for(let j=0;j<N-1;j++)for(let i=0;i<N-1;i++){const r=rnd();Bk.push({i,j,park:r<.17,h:15+rnd()*70})}}
+function bk(i,j){return(i<0||j<0||i>=N-1||j>=N-1)?null:Bk[j*(N-1)+i]}
+function sunCalc(){const el=(8+70*Math.sin(Math.PI*(P.hr-6)/12))*Math.PI/180;sun.s=Math.sin(el);sun.tan=Math.tan(el);sun.az=(90+180*(P.hr-6)/12)*Math.PI/180;sun.sx=-Math.sin(sun.az);sun.sy=Math.cos(sun.az);const e=P.RH/100*6.105*Math.exp(17.27*P.T/(237.7+P.T));AT=P.T+.33*e-.7-4}
+function shaded(x,y){const m=.18;for(const b of Bk){if(b.park)continue;const l=b.h/(100*sun.tan),n=Math.ceil(l/.15)+1;for(let t=0;t<=n;t++){const u=l*t/n,qx=x-sun.sx*u,qy=y-sun.sy*u;if(qx>b.i+m&&qx<b.i+1-m&&qy>b.j+m&&qy<b.j+1-m)return 1}}return 0}
+function build(){sunCalc();E=[];adj=Array.from({length:N*N},()=>[]);
+ const mk=(x1,y1,x2,y2,tree)=>{let f=0;for(const u of[.2,.5,.8])f+=shaded(x1+(x2-x1)*u,y1+(y2-y1)*u);f/=3;const sf=Math.max(f,tree?.7:0),main=(x1===x2?x1:y1)%4===0;
+  const L=AT+5.5*sun.s*(1-sf)+(main?1.5:0)-(tree?2:0);const e={x1,y1,x2,y2,L,sf};const id=E.push(e)-1;const a=y1*N+x1,b=y2*N+x2;adj[a].push({to:b,e:id});adj[b].push({to:a,e:id})};
+ for(let y=0;y<N;y++)for(let x=0;x<N-1;x++){const a=bk(x,y-1),b=bk(x,y);mk(x,y,x+1,y,(a&&a.park)||(b&&b.park))}
+ for(let x=0;x<N;x++)for(let y=0;y<N-1;y++){const a=bk(x-1,y),b=bk(x,y);mk(x,y,x,y+1,(a&&a.park)||(b&&b.park))}
+ Lmin=Math.min(...E.map(e=>e.L));Lmax=Math.max(...E.map(e=>e.L))}
+function route(k){const a=P.A[1]*N+P.A[0],b=P.B[1]*N+P.B[0],d=Array(N*N).fill(1e9),pe=[],pn=[],done=[];d[a]=0;
+ for(let n=0;n<N*N;n++){let u=-1;for(let v=0;v<N*N;v++)if(!done[v]&&(u<0||d[v]<d[u]))u=v;if(u<0||d[u]>=1e9)break;done[u]=1;
+  for(const{to,e}of adj[u]){const c=1+k*Math.max(0,E[e].L-Lmin)/6;if(d[u]+c<d[to]){d[to]=d[u]+c;pe[to]=e;pn[to]=u}}}
+ const p=[];let v=b;while(v!==a&&pe[v]!==undefined){p.unshift({e:pe[v],from:pn[v],to:v});v=pn[v]}return p}
+function met(p){const n=p.length;let L=0,sh=0,dose=0;for(const s of p){const e=E[s.e];L+=e.L;sh+=e.sf;dose+=Math.max(0,e.L-TH)*MPE}return{n,min:n*MPE,L:n?L/n:0,sh:n?sh/n*100:0,dose,trips:dose>0?Math.floor(LIM/dose):99}}
+function hc(L){const t=Math.min(1,Math.max(0,(L-Lmin)/((Lmax-Lmin)||1))),a=t<.5?[31,138,138]:[240,180,40],b=t<.5?[240,180,40]:[200,40,30],u=t<.5?t*2:(t-.5)*2;return`rgb(${a.map((v,i)=>Math.round(v+(b[i]-v)*u)).join()})`}
+const X=v=>PAD+v*S,nx=v=>X(v%N),ny=v=>X(Math.floor(v/N));
+function line(p,col,w,dash){const g=$('cv').getContext('2d');if(!p.length)return;g.beginPath();g.moveTo(nx(p[0].from),ny(p[0].from));for(const s of p)g.lineTo(nx(s.to),ny(s.to));g.strokeStyle=col;g.lineWidth=w;g.setLineDash(dash||[]);g.lineJoin=g.lineCap='round';g.stroke();g.setLineDash([])}
+function draw(){const g=$('cv').getContext('2d'),cs=getComputedStyle(document.documentElement);g.fillStyle=cs.getPropertyValue('--bg').trim()||'#f6efe4';g.fillRect(0,0,720,720);const m=.18;
+ for(const b of Bk){if(b.park){g.fillStyle='#6fa876';g.fillRect(X(b.i)+6,X(b.j)+6,S-12,S-12);g.fillStyle='#4f8a5a';for(const[u,v]of[[22,24],[50,20],[36,44],[20,56],[56,54]]){g.beginPath();g.arc(X(b.i)+u,X(b.j)+v,8,0,7);g.fill()}}}
+ g.fillStyle='#000';g.globalAlpha=.035;for(const b of Bk){if(b.park)continue;const l=b.h/(100*sun.tan);for(let k=0;k<=10;k++){const o=l*k/10;g.fillRect(X(b.i+m-sun.sx*o),X(b.j+m-sun.sy*o),S*(1-2*m),S*(1-2*m))}}g.globalAlpha=1;
+ for(const b of Bk){if(b.park)continue;g.fillStyle=`hsl(25 10% ${68-b.h*.4}%)`;g.fillRect(X(b.i+m),X(b.j+m),S*(1-2*m),S*(1-2*m))}
+ g.lineCap='round';for(const e of E){g.beginPath();g.moveTo(X(e.x1),X(e.y1));g.lineTo(X(e.x2),X(e.y2));g.strokeStyle=hc(e.L);g.lineWidth=9;g.stroke()}
+ line(fast,'#fff',7);line(fast,'#111',3,[8,6]);line(cool,'#fff',11);line(cool,'#1d4ed8',6);
+ g.font='22px sans-serif';g.textAlign='center';g.textBaseline='middle';for(const[x,y]of WP)g.fillText('💧',X(x),X(y));
+ if(sim){for(const[k,c]of[['f','#111'],['c','#1d4ed8']]){const r=sim[k];if(r.at!==undefined&&r.rest){const w=nearW(r.at);g.strokeStyle=c;g.lineWidth=3;g.beginPath();g.arc(X(w[0]),X(w[1]),20,0,7);g.stroke()}
+  const pos=r.pos!==undefined?r.pos:P.A[1]*N+P.A[0];g.fillStyle=c;g.strokeStyle='#fff';g.lineWidth=3;g.beginPath();g.arc(nx(pos)+(k==='f'?-6:6),ny(pos),9,0,7);g.fill();g.stroke()}}
+ for(const[p,t,c]of[[P.A,'A','#1a7f37'],[P.B,'B','#b42318']]){g.fillStyle=c;g.beginPath();g.arc(X(p[0]),X(p[1]),15,0,7);g.fill();g.fillStyle='#fff';g.font='bold 16px sans-serif';g.fillText(t,X(p[0]),X(p[1]))}}
+function nearW(v){const x=v%N,y=Math.floor(v/N);return WP.reduce((a,b)=>Math.hypot(b[0]-x,b[1]-y)<Math.hypot(a[0]-x,a[1]-y)?b:a)}
+function panel(){const f=met(fast),c=met(cool),card=(t,m,col)=>`<div class="card m"><h3 style="color:${col}">${t}</h3><div>Time <b>${m.min.toFixed(1)} min</b></div><div>Avg feels-like <b>${m.L.toFixed(1)} °C</b></div><div>Shaded <b>${m.sh.toFixed(0)}%</b></div><div>Heat Dose <b>${m.dose.toFixed(0)}</b> °C·min</div><div>Trips before rest <b>${m.trips>=99?'no limit':m.trips}</b></div></div>`;
+ $('mets').innerHTML=card('Shortest route',f,'var(--fg)')+card('Chhaon route',c,'var(--blue)');
+ $('lmin').textContent=Lmin.toFixed(0)+'°C';$('lmax').textContent=Lmax.toFixed(0)+'°C';
+ const h=Math.floor(P.hr),mi=Math.round((P.hr-h)*60);$('vh').textContent=h+':'+String(mi).padStart(2,'0');$('vT').textContent=P.T+'°C';$('vRH').textContent=P.RH+'%';$('vk').textContent=P.k}
+function upd(){stopSim();build();fast=route(0);cool=route(P.k);sim=null;bars();$('alert').textContent='';panel();draw()}
+function bars(){for(const[k,id]of[['f','f'],['c','c']]){const r=sim?sim[k]:{d:0,trip:0};$('b'+id).style.width=Math.min(100,r.d/LIM*100)+'%';$('t'+id).textContent=`· ${r.d.toFixed(0)}/${LIM} · trips ${r.trip}${r.rest?' · REST':''}`}}
+function stopSim(){if(tm){clearInterval(tm);tm=null}}
+function say(txt){if(!$('vc').checked||!window.speechSynthesis)return;const u=new SpeechSynthesisUtterance(txt);u.lang='hi-IN';speechSynthesis.speak(u)}
+function startSim(){stopSim();$('alert').textContent='';sim={f:{i:0,d:0,trip:0},c:{i:0,d:0,trip:0},n:0};tm=setInterval(step,110)}
+function step(){let any=0;for(const[k,p]of[['f',fast],['c',cool]]){const r=sim[k];if(r.rest||!p.length)continue;any=1;const s=p[r.i];r.d+=Math.max(0,E[s.e].L-TH)*MPE;r.pos=s.to;r.i++;if(r.i>=p.length){r.i=0;r.trip++}
+  if(r.d>=LIM){r.rest=1;r.at=s.to;const w=nearW(s.to);$('alert').innerHTML+=(k==='f'?'Shortest-route rider':'Chhaon rider')+` must rest after ${r.trip} trips. Nearest water and shade: (${w[0]}, ${w[1]}).<br>`;say('आराम करें। पास के पानी और छाँव में रुकें।')}}
+ sim.n++;if(!any||sim.n>900){stopSim();if(sim.n>900)$('alert').textContent='Dose limit not reached at these conditions.'}bars();draw()}
+for(const id of['hr','T','RH','k'])$(id).oninput=e=>{P[id]=+e.target.value;upd()};
+$('sim').onclick=startSim;$('new').onclick=()=>{seed=Math.random()*1e9|0;gen();upd()};
+$('cv').onclick=e=>{const r=e.target.getBoundingClientRect(),sc=720/r.width,x=Math.min(N-1,Math.max(0,Math.round(((e.clientX-r.left)*sc-PAD)/S))),y=Math.min(N-1,Math.max(0,Math.round(((e.clientY-r.top)*sc-PAD)/S)));P[P.click?'B':'A']=[x,y];P.click^=1;upd()};
+matchMedia('(prefers-color-scheme: dark)').addEventListener('change',()=>draw());
+gen();upd();
+</script>
+</body>
+</html>
