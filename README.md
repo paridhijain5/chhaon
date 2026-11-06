@@ -11,11 +11,6 @@ Chhaon scores every road segment for **felt heat** (air temperature, humidity, s
 
 Demo video: [add link here]
 
-## Screenshots
-| Midday heat map and routes | Shift simulation and Heat Dose |
-|---|---|
-| ![Heat map](docs/screenshot-1.png) | ![Shift simulation](docs/screenshot-2.png) |
-
 ## The Problem
 Millions of delivery riders, construction workers and street vendors work through heatwaves with no street-level heat information. Heat alerts cover a whole district, navigation apps pick the fastest (often sunniest) route, and nobody tracks cumulative heat exposure.
 
